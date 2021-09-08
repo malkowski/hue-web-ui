@@ -1,0 +1,384 @@
+<link rel="stylesheet" type="text/css" href="3rdparty/jpicker/css/jpicker-1.1.6.min.css" />
+<link rel="stylesheet" type="text/css" href="3rdparty/jpicker/jPicker.css" />
+<link rel="stylesheet" href="//code.jquery.com/ui/1.12.1/themes/smoothness/jquery-ui.css">
+<style type='text/css'>
+body {
+	background: #f2f2f2;
+	font-family: sans-serif;
+	font-size:13px;
+	margin: 0;
+	padding: 0;
+}
+table.jPicker {
+	border: none;
+	background: none;
+	padding: 0;
+}
+table.jPicker h2.Title {
+	display: none;
+}
+table.jPicker div.Bar {
+	cursor: ns-resize;
+	margin-top: 0;
+}
+table.jPicker div.Map {
+	margin: 0;
+}
+table.jPicker td.Preview {
+	vertical-align: top;
+	padding: 0;
+}
+table.jPicker td.button,
+table.jPicker tr.red,
+table.jPicker tr.green,
+table.jPicker tr.blue,
+table.jPicker tr.alpha,
+table.jPicker tr.hex {
+	display: none;
+}
+table.jPicker td.radio label {
+	white-space: nowrap;
+}
+table.jPicker tr.Info {
+	vertical-align: bottom;
+	font-size: 0.7em;
+}
+
+#body {
+	margin-left: 20em;
+	padding: 25px;
+}
+
+#infoLightName {
+	margin-top: 0;
+}
+
+#lightState button {
+	background: #aaa;
+	border-color: #777;
+	box-shadow: inset 3px 2px 6px rgba(0,0,0,0.7);
+	font-size: 1em;
+}
+#lightState button.selected {
+	background: #ddd;
+	box-shadow: none;
+}
+#lightState button:nth-child(1) {
+	border-right: none;
+}
+#lightState button:nth-child(1).selected {
+	background: #daa;
+}
+#lightState button:nth-last-child(1).selected {
+	background: #ada;
+}
+#leftmenu {
+	border-right: 2px solid #555;
+	position: absolute;
+	top: 0;
+	left: 0;
+	bottom: 0;
+	width: 20em;
+	overflow-y: scroll;
+}
+#leftmenu > h1 {
+	display: block;
+	margin: 0;
+	background: #555;
+	color: #fff;
+	font-size: 1.2em;
+	padding: 0.25em 0.5em;
+	text-transform: uppercase;
+}
+#leftmenu > ul {
+	display: block;
+	margin: 0;
+	padding: 0;
+	border: 0;
+}
+#leftmenu > ul > li {
+	display: block;
+	padding: 0.5em 1em;
+	margin: 0;
+	border: 1px solid #aaa;
+	background: #eee;
+	cursor: pointer;
+}
+#leftmenu > ul > li:hover {
+	background: #ccc;
+}
+
+</style>
+<script src="https://code.jquery.com/jquery-1.12.4.min.js"></script>
+<script src="https://code.jquery.com/ui/1.12.1/jquery-ui.js"></script>
+<script type="text/javascript" src="3rdparty/jpicker/jpicker-1.1.6.min.js"></script>
+<script src="3rdparty/color-conversion-algorithms.js"></script>
+<script>
+const baseUrl = 'http://hue.home/api/HomeAutomation'
+
+$.fn.jPicker.defaults.images.clientPath = '3rdparty/jpicker/images/'
+
+let hueLightId = 1
+
+/**
+ * response = [{"success":{"/lights/1/state/hue":45146}},{"success":{"/lights/1/state/sat":252}},{"success":{"/lights/1/state/bri":252}}]
+ * returns {"hue":248,"sat":99,"bri":99}
+ */
+function mergedLightUpdateResponse (response) {
+	let merged = Object.assign.apply(Object, response.map(d => d.success))
+	let out = {}
+	for (k of Object.keys(merged)) {
+		out[k.replace(/.*\//, '')] = merged[k]
+	}
+	return mergedLightState(out)
+}
+
+/**
+ * state = {"hue":45146,"sat":252,"bri":252}
+ * returns {"hue":248,"sat":99,"bri":99}
+ */
+function mergedLightState (state) {
+	if (state.hue !== undefined) state.hue = state.hue/65535*360
+	if (state.sat !== undefined) state.sat = state.sat/255*100
+	if (state.bri !== undefined) state.bri = state.bri/255*100
+	return state
+}
+
+function colorChangeHandler (color, context) {
+	setLightColor(hueLightId, color)
+}
+
+function setLightColor (id, color) {
+
+	colorVal = color.val()
+
+	console.debug(`setLightColor(${id}) input: hsv = [ ${colorVal.h}, ${colorVal.s}, ${colorVal.v} ]`)
+
+	$.ajax({
+		'method': 'PUT',
+		'url': `${baseUrl}/lights/${id}/state`,
+		'contentType': 'application/json',
+		'dataType': 'json',
+		'data': JSON.stringify({
+			'hue': parseInt(colorVal.h / 360 * 65535),
+			'sat': parseInt(colorVal.s / 100 * 255),
+			'bri': parseInt(colorVal.v / 100 * 255),
+		}),
+		'success': function(response, textStatus){
+			color = mergedLightUpdateResponse(response)
+
+			let jpColor = new $.jPicker.Color({ h: color.hue, s: color.sat, v: color.bri })
+
+			console.debug(`setLightColor(${id}) responose: hsb = [ ${color.hue}, ${color.sat}, ${color.bri} ]`)
+			setPickerColor(jpColor)
+		},
+	})
+	
+}
+
+function loadLightList (callback) {
+
+	$.ajax({
+		'method': 'GET',
+		'url': `${baseUrl}/lights`,
+		'contentType': 'application/json',
+		'dataType': 'json',
+		'success': function(lights){
+			console.log('loadLightList', lights)
+			let lightIDs = Object.keys(lights).sort((a,b) => { return lights[a].name < lights[b].name ? -1 : 1 })
+			let minID = lightIDs.slice().sort()[0]
+			console.log('lightIDs', lightIDs)
+			lightIDs.forEach(function(id){
+				let $option = $('<option>')
+				$option.val(id)
+				if (id == minID) {
+					$option.attr('selected', 'selected')
+				}
+				$option.text(lights[id].name)
+				$('#lightList').append($option)
+			})
+			callback && callback()
+		}
+	})
+
+}
+
+function getLightInfo (id, callback) {
+
+	$.ajax({
+		'method': 'GET',
+		'url': `${baseUrl}/lights/${id}`,
+		'contentType': 'application/json',
+		'dataType': 'json',
+		'success': function(data, textStatus){
+			let color = mergedLightState(data.state)
+			data.color = new $.jPicker.Color({ h: color.hue, s: color.sat, v: color.bri })
+			callback && callback(data)
+		},
+	})
+
+}
+
+function setLightPowerState (id, powerState, callback) {
+	$.ajax({
+		'method': 'PUT',
+		'url': `${baseUrl}/lights/${id}/state`,
+		'contentType': 'application/json',
+		'dataType': 'json',
+		'data': JSON.stringify({ on: powerState }),
+		'success': function(data, textStatus){
+			callback && callback(mergedLightUpdateResponse(data))
+		},
+	})
+}
+
+function setPickerColor (currentColor, activeColor) {
+	let colors = $('#colorpicker')[0].color
+	colors.active.unbind(colorChangeHandler)
+	colors.current.val('hsv', currentColor.val())
+	if (activeColor) {
+		colors.active.val('hsv', activeColor.val())
+	}
+	colors.active.bind(colorChangeHandler)
+}
+
+function updateLightStateElement (powerState) {
+	$('#lightState button:first').toggleClass('selected', !powerState)
+	$('#lightState button:last').toggleClass('selected', powerState)
+}
+
+$(function(){
+
+	loadLightList(function(){
+
+		$('#lightList').change(function(){
+			hueLightId = parseInt( $(this).val() )
+		})
+
+		getLightInfo(hueLightId, function(light){
+
+			$('#colorpicker').jPicker({
+				'window': {
+					liveUpdate: true,
+				},
+				'color': {
+					mode: 'h',
+					active: light.color,
+				},
+			})
+			$('#colorpicker')[0].color.active.bind(colorChangeHandler)
+
+			let intvTimer = setInterval(function(){
+				if (!$('#colorpicker table').length) return
+				clearInterval(intvTimer)
+		
+				$('#colorpicker table').width(
+					  $('#colorpicker table').width() 
+					- $('#colorpicker td.button').width()
+					- 20
+				)
+
+				$('#colorpicker td.preview').parent().css({
+					'height': '100px',
+				})
+		
+				let $infoLightName = $('#infoLightName')
+
+				let $infoContainer = $('<td colspan=2>')
+				let $infoLightID = $('<div id="infoLightID">').appendTo($infoContainer)
+				let $infoLightType = $('<div id="infoLightType">').appendTo($infoContainer)
+				let $infoModelID = $('<div id="infoModelID">').appendTo($infoContainer)
+				$('#colorpicker table tbody').append( $('<tr class="Info">').append($infoContainer) )
+
+				$('#lightState').html('<button type=button value=0>Off</button><button type=button value=1>On</button>')
+				$('#lightState').buttonset()
+				$('#lightState button').click(function(){
+					let newState = !! parseInt($(this).val())
+					setLightPowerState(hueLightId, newState, function(state){
+						updateLightStateElement(state.on)
+					})
+				})
+
+
+				function updateLightInfo () {
+					getLightInfo(hueLightId, function(light){
+						$infoLightName.text(light.name)
+						$infoLightID.text(`ID: ${hueLightId}`)
+						$infoLightType.text(light.type)
+						$infoModelID.text(light.modelid)
+						console.log('LIGHT COLOR', light.color)
+						setPickerColor(light.color, light.color)
+						updateLightStateElement(light.state.on)
+					})
+				}
+				$('#lightList').change(updateLightInfo)
+				updateLightInfo()
+		
+			}, 50)
+
+		})
+
+	})
+
+})
+</script>
+
+<div id=leftmenu>
+<h1>Lights</h1>
+<ul>
+	<li data-id="8">Bedroom - Bed</li>
+	<li data-id="18">Bedroom - Nightstand Lamp</li>
+	<li data-id="22">Bedroom closet light</li>
+	<li data-id="23">Front door ceiling light</li>
+	<li data-id="20">Kitchen - Pantry</li>
+	<li data-id="9">Kitchen - Track Light B</li>
+	<li data-id="13">Kitchen - Track Light C</li>
+	<li data-id="12">Kitchen - Track Light D</li>
+	<li data-id="11">Kitchen - Track Light E</li>
+	<li data-id="10">Kitchen - Track Light F</li>
+	<li data-id="28">Kitchen - counter light</li>
+	<li data-id="27">Laundry Room - Ceiling Light</li>
+	<li data-id="2">Living Room - Ceiling Fan A</li>
+	<li data-id="3">Living Room - Ceiling Fan B</li>
+	<li data-id="6">Living Room - Ceiling Fan C</li>
+	<li data-id="1">Living Room - Side Table</li>
+	<li data-id="16">Office - Ceiling Light A</li>
+	<li data-id="17">Office - Ceiling Light B</li>
+	<li data-id="25">Office - Overhead Light</li>
+	<li data-id="21">Stair light</li>
+	<li data-id="29">Study - Desk Lamp</li>
+	<li data-id="4">Study - Floor Lamp</li>
+	<li data-id="26">Study - Light Bar</li>
+	<li data-id="5">Study - Shelf Lamp</li>
+	<li data-id="19">Study - Wall Light</li>
+</ul>
+<h1>Groups</h1>
+<ul>
+	<li data-id="9">Bedroom</li>
+	<li data-id="10">Kitchen</li>
+	<li data-id="4">Kitchen - Track Lights</li>
+	<li data-id="15">Laundry Room</li>
+	<li data-id="6">Living Room</li>
+	<li data-id="3">Living Room - Ceiling Fan</li>
+	<li data-id="8">Office</li>
+	<li data-id="13">Stairs + front door</li>
+	<li data-id="7">Study</li>
+</ul>
+</div>
+
+<div id=body>
+
+	<h1 id='infoLightName'>&nbsp;</h1>
+
+	<label>
+		Light:
+		<select id='lightList'></select>
+	</label>
+
+	<div id='lightState'></div>
+
+	<p></p>
+
+	<div id='colorpicker'></div>
+
+</div>
